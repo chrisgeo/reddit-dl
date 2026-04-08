@@ -84,7 +84,12 @@ pub async fn get_user_posts(
     Ok((posts, next))
 }
 
-/// Fetch a user's saved posts
+/// Fetch a user's saved posts.
+///
+/// Reddit's saved listing includes both t3 (link/post) and t1 (comment) items.
+/// We deserialize the whole listing as raw JSON values, then filter for `kind ==
+/// "t3"` entries and deserialize only those as `Post`.  This avoids a hard
+/// deserialization failure when the user has saved comments mixed in with posts.
 pub async fn get_saved(
     client: &RedditClient,
     username: &str,
@@ -98,11 +103,30 @@ pub async fn get_saved(
         after_owned = a.to_string();
         params.push(("after", &after_owned));
     }
-    let listing: Listing<Post> = client
+
+    // Deserialize as raw JSON Values to tolerate mixed t3/t1 items without panicking.
+    let listing: Listing<serde_json::Value> = client
         .get_json(&format!("/user/{}/saved", username), &params)
         .await?;
-    let posts: Vec<Post> = listing.data.children.into_iter().map(|t| t.data).collect();
+
     let next = listing.data.after;
+
+    let mut posts: Vec<Post> = Vec::new();
+    for thing in listing.data.children {
+        // Only process t3 (link/post) items; silently skip t1 (comments) and
+        // any other unexpected kinds.
+        if thing.kind != "t3" {
+            tracing::debug!("Skipping saved item with kind={}", thing.kind);
+            continue;
+        }
+        match serde_json::from_value::<Post>(thing.data) {
+            Ok(post) => posts.push(post),
+            Err(e) => {
+                tracing::warn!("Failed to deserialize saved t3 post: {}", e);
+            }
+        }
+    }
+
     Ok((posts, next))
 }
 

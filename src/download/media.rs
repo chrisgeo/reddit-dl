@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Duration;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use futures_util::StreamExt;
@@ -6,21 +7,115 @@ use futures_util::StreamExt;
 use crate::error::{Error, Result};
 use crate::post::Post;
 
+/// Maximum file size we are willing to download (500 MiB).
+const MAX_FILE_SIZE: u64 = 500 * 1024 * 1024;
+
+/// Number of extra attempts after the first failure for transient errors.
+const DOWNLOAD_RETRIES: u32 = 2;
+
 // ── Direct download ───────────────────────────────────────────────────────────
 
 /// Download a single URL to `path` using streaming (no full-file buffering).
+///
+/// Retries up to `DOWNLOAD_RETRIES` additional times on transient network
+/// errors or 5xx responses.  Returns an immediate error (no retry) on 403/404.
+/// Deletes the output file and returns an error if the downloaded file is empty
+/// or exceeds `MAX_FILE_SIZE`.
 pub async fn download_direct(
     http_client: &reqwest::Client,
     url: &str,
     path: &Path,
 ) -> Result<()> {
-    let response = http_client.get(url).send().await?;
+    let total_attempts = DOWNLOAD_RETRIES + 1;
+    let mut last_err: Option<Error> = None;
+
+    for attempt in 0..total_attempts {
+        if attempt > 0 {
+            let delay = Duration::from_secs(attempt as u64); // 1s, 2s
+            tracing::debug!(
+                "Retrying download (attempt {}/{}) for {} in {:?}",
+                attempt + 1,
+                total_attempts,
+                url,
+                delay
+            );
+            tokio::time::sleep(delay).await;
+        }
+
+        match attempt_download_direct(http_client, url, path).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                // Non-retryable errors: return immediately
+                if is_permanent_download_error(&e) {
+                    return Err(e);
+                }
+                tracing::warn!(
+                    "Transient error on download attempt {}/{} for {}: {}",
+                    attempt + 1,
+                    total_attempts,
+                    url,
+                    e
+                );
+                last_err = Some(e);
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        Error::Other(format!("All {} download attempts failed for {}", total_attempts, url))
+    }))
+}
+
+/// Single attempt at downloading a URL.  Returns a permanent error for 403/404
+/// and a transient error for network issues / 5xx.
+async fn attempt_download_direct(
+    http_client: &reqwest::Client,
+    url: &str,
+    path: &Path,
+) -> Result<()> {
+    let response = match http_client.get(url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            // Classify network errors
+            if e.is_timeout() || e.is_connect() {
+                return Err(Error::Http(e));
+            }
+            return Err(Error::Http(e));
+        }
+    };
+
     let status = response.status();
+    let status_u16 = status.as_u16();
+
+    // Permanent failures — don't retry
+    if status_u16 == 403 || status_u16 == 404 {
+        return Err(Error::Other(format!(
+            "HTTP {} (permanent) downloading {}",
+            status, url
+        )));
+    }
+
     if !status.is_success() {
         return Err(Error::Other(format!(
             "HTTP {} downloading {}",
             status, url
         )));
+    }
+
+    // Check Content-Length up front to avoid wasting time on huge files
+    if let Some(content_length) = response.content_length() {
+        if content_length > MAX_FILE_SIZE {
+            tracing::warn!(
+                "Skipping {}: Content-Length {} exceeds limit of {} bytes",
+                url,
+                content_length,
+                MAX_FILE_SIZE
+            );
+            return Err(Error::Other(format!(
+                "File too large ({} bytes, limit {} bytes): {}",
+                content_length, MAX_FILE_SIZE, url
+            )));
+        }
     }
 
     // Ensure parent directory exists
@@ -30,13 +125,52 @@ pub async fn download_direct(
 
     let mut file = fs::File::create(path).await?;
     let mut stream = response.bytes_stream();
+    let mut bytes_written: u64 = 0;
 
     while let Some(chunk) = stream.next().await {
         let bytes = chunk?;
+        bytes_written += bytes.len() as u64;
+
+        // Guard against servers that lie about Content-Length
+        if bytes_written > MAX_FILE_SIZE {
+            drop(file);
+            let _ = fs::remove_file(path).await;
+            tracing::warn!(
+                "Aborting download of {}: exceeded {} bytes during streaming",
+                url,
+                MAX_FILE_SIZE
+            );
+            return Err(Error::Other(format!(
+                "File too large (exceeded {} bytes during download): {}",
+                MAX_FILE_SIZE, url
+            )));
+        }
+
         file.write_all(&bytes).await?;
     }
     file.flush().await?;
+
+    // Empty response body — clean up and report error
+    if bytes_written == 0 {
+        drop(file);
+        let _ = fs::remove_file(path).await;
+        return Err(Error::Other(format!(
+            "Empty response body (0 bytes) for {}",
+            url
+        )));
+    }
+
     Ok(())
+}
+
+/// Returns true if the error is permanent and should not be retried.
+fn is_permanent_download_error(e: &Error) -> bool {
+    match e {
+        Error::Other(msg) => {
+            msg.contains("HTTP 403") || msg.contains("HTTP 404")
+        }
+        _ => false,
+    }
 }
 
 // ── Reddit video ──────────────────────────────────────────────────────────────
@@ -239,16 +373,85 @@ pub fn has_ffmpeg() -> bool {
 
 // ── internal helpers ──────────────────────────────────────────────────────────
 
-/// Stream-download `url` to `path`.
+/// Stream-download `url` to `path`.  Retries up to `DOWNLOAD_RETRIES` times on
+/// transient errors.  Returns an immediate error (no retry) on 403/404.
+/// Also enforces the `MAX_FILE_SIZE` limit and errors on empty responses.
 async fn download_to_file(
     http_client: &reqwest::Client,
     url: &str,
     path: &Path,
 ) -> Result<()> {
-    let response = http_client.get(url).send().await?;
+    let total_attempts = DOWNLOAD_RETRIES + 1;
+    let mut last_err: Option<Error> = None;
+
+    for attempt in 0..total_attempts {
+        if attempt > 0 {
+            let delay = Duration::from_secs(attempt as u64);
+            tracing::debug!(
+                "Retrying download_to_file (attempt {}/{}) for {} in {:?}",
+                attempt + 1,
+                total_attempts,
+                url,
+                delay
+            );
+            tokio::time::sleep(delay).await;
+        }
+
+        match attempt_download_to_file(http_client, url, path).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if is_permanent_download_error(&e) {
+                    return Err(e);
+                }
+                tracing::warn!(
+                    "Transient error on download_to_file attempt {}/{} for {}: {}",
+                    attempt + 1,
+                    total_attempts,
+                    url,
+                    e
+                );
+                last_err = Some(e);
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        Error::Other(format!("All {} download attempts failed for {}", total_attempts, url))
+    }))
+}
+
+/// Single attempt at streaming a URL to a file.
+async fn attempt_download_to_file(
+    http_client: &reqwest::Client,
+    url: &str,
+    path: &Path,
+) -> Result<()> {
+    let response = http_client.get(url).send().await.map_err(Error::Http)?;
     let status = response.status();
+    let status_u16 = status.as_u16();
+
+    if status_u16 == 403 || status_u16 == 404 {
+        return Err(Error::Other(format!("HTTP {} (permanent) for {}", status, url)));
+    }
+
     if !status.is_success() {
         return Err(Error::Other(format!("HTTP {} for {}", status, url)));
+    }
+
+    // Reject oversized files before writing anything
+    if let Some(content_length) = response.content_length() {
+        if content_length > MAX_FILE_SIZE {
+            tracing::warn!(
+                "Skipping {}: Content-Length {} exceeds limit of {} bytes",
+                url,
+                content_length,
+                MAX_FILE_SIZE
+            );
+            return Err(Error::Other(format!(
+                "File too large ({} bytes, limit {}): {}",
+                content_length, MAX_FILE_SIZE, url
+            )));
+        }
     }
 
     if let Some(parent) = path.parent() {
@@ -257,10 +460,34 @@ async fn download_to_file(
 
     let mut file = fs::File::create(path).await?;
     let mut stream = response.bytes_stream();
+    let mut bytes_written: u64 = 0;
+
     while let Some(chunk) = stream.next().await {
-        file.write_all(&chunk?).await?;
+        let bytes = chunk?;
+        bytes_written += bytes.len() as u64;
+
+        if bytes_written > MAX_FILE_SIZE {
+            drop(file);
+            let _ = fs::remove_file(path).await;
+            return Err(Error::Other(format!(
+                "File too large (exceeded {} bytes during download): {}",
+                MAX_FILE_SIZE, url
+            )));
+        }
+
+        file.write_all(&bytes).await?;
     }
     file.flush().await?;
+
+    if bytes_written == 0 {
+        drop(file);
+        let _ = fs::remove_file(path).await;
+        return Err(Error::Other(format!(
+            "Empty response body (0 bytes) for {}",
+            url
+        )));
+    }
+
     Ok(())
 }
 

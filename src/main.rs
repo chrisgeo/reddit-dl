@@ -3,6 +3,7 @@ mod config;
 mod download;
 mod error;
 mod post;
+mod progress;
 mod sources;
 mod storage;
 
@@ -142,8 +143,20 @@ async fn main() -> Result<()> {
             let mut total_skipped = 0u32;
             let mut source_errors = 0u32;
 
+            // Progress tracking: disabled when --verbose (conflicts with tracing output)
+            let tracker = if !cli.verbose {
+                Some(progress::ProgressTracker::new())
+            } else {
+                None
+            };
+
             for src in &active_sources {
                 tracing::info!("Syncing {}/{}", src.source_type(), src.source_name());
+
+                // Show fetch spinner while we retrieve the post list
+                let spinner = tracker.as_ref().map(|t| {
+                    t.add_fetch_spinner(src.source_type(), src.source_name())
+                });
 
                 // Load cursor unless --full
                 let cursor_data = if full {
@@ -156,12 +169,22 @@ async fn main() -> Result<()> {
 
                 match src.fetch_posts(&client, cursor_id, limit).await {
                     Ok(posts) => {
+                        // Retire the fetch spinner
+                        if let Some(sp) = spinner {
+                            sp.finish_and_clear();
+                        }
+
                         if posts.is_empty() {
                             tracing::info!("  No new posts from {}/{}", src.source_type(), src.source_name());
                             continue;
                         }
 
                         tracing::info!("  Found {} posts from {}/{}", posts.len(), src.source_type(), src.source_name());
+
+                        // Switch to a deterministic progress bar now that we know the total
+                        let bar = tracker.as_ref().map(|t| {
+                            t.add_source_bar(src.source_type(), src.source_name(), posts.len() as u64)
+                        });
 
                         db.begin_transaction().map_err(|e| anyhow::anyhow!("{}", e))?;
                         let mut batch_downloaded = 0u32;
@@ -179,6 +202,13 @@ async fn main() -> Result<()> {
                                 .map_err(|e| anyhow::anyhow!("{}", e))?;
                             if already {
                                 batch_skipped += 1;
+                                if let Some(pb) = &bar {
+                                    pb.inc(1);
+                                    pb.set_message(format!(
+                                        "{} downloaded, {} skipped",
+                                        batch_downloaded, batch_skipped
+                                    ));
+                                }
                                 continue;
                             }
 
@@ -209,6 +239,13 @@ async fn main() -> Result<()> {
                             ).map_err(|e| anyhow::anyhow!("{}", e))?;
 
                             batch_downloaded += 1;
+                            if let Some(pb) = &bar {
+                                pb.inc(1);
+                                pb.set_message(format!(
+                                    "{} downloaded, {} skipped",
+                                    batch_downloaded, batch_skipped
+                                ));
+                            }
                         }
 
                         // Update cursor to newest post
@@ -223,6 +260,13 @@ async fn main() -> Result<()> {
 
                         db.commit().map_err(|e| anyhow::anyhow!("{}", e))?;
 
+                        if let Some(pb) = bar {
+                            pb.finish_with_message(format!(
+                                "{} downloaded, {} skipped",
+                                batch_downloaded, batch_skipped
+                            ));
+                        }
+
                         tracing::info!(
                             "  Downloaded: {}, Skipped (dedup): {}",
                             batch_downloaded,
@@ -232,6 +276,9 @@ async fn main() -> Result<()> {
                         total_skipped += batch_skipped;
                     }
                     Err(e) => {
+                        if let Some(sp) = spinner {
+                            sp.finish_and_clear();
+                        }
                         tracing::error!(
                             "Failed to fetch from {}/{}: {}",
                             src.source_type(),
@@ -249,8 +296,114 @@ async fn main() -> Result<()> {
             );
         }
         Command::Status => {
-            // TODO: Phase 7 will implement status display
-            println!("Status not yet implemented. Config loaded successfully.");
+            let output_dir = config.resolve_output_dir();
+            let db_path = output_dir.join("reddit-dl.db");
+
+            if !db_path.exists() {
+                println!("No sync data found. Run 'reddit-dl sync' first.");
+                return Ok(());
+            }
+
+            let db = storage::db::Database::open(&db_path)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+            let stats = db.get_stats().map_err(|e| anyhow::anyhow!("{}", e))?;
+            let cursors = db.get_all_cursors().map_err(|e| anyhow::anyhow!("{}", e))?;
+
+            if stats.total_posts == 0 && cursors.is_empty() {
+                println!("No sync data found. Run 'reddit-dl sync' first.");
+                return Ok(());
+            }
+
+            println!("reddit-dl status");
+            println!("{}", "=".repeat(60));
+            println!("Total posts downloaded: {}", stats.total_posts);
+            println!();
+
+            if !stats.posts_by_source.is_empty() {
+                println!("Posts by source:");
+                // Calculate column widths
+                let type_width = stats.posts_by_source.iter()
+                    .map(|(t, _, _)| t.len())
+                    .max()
+                    .unwrap_or(4)
+                    .max(4);
+                let name_width = stats.posts_by_source.iter()
+                    .map(|(_, n, _)| n.len())
+                    .max()
+                    .unwrap_or(4)
+                    .max(4);
+
+                println!(
+                    "  {:<type_width$}  {:<name_width$}  {:>6}",
+                    "Type", "Name", "Posts",
+                    type_width = type_width,
+                    name_width = name_width,
+                );
+                println!(
+                    "  {}  {}  {}",
+                    "-".repeat(type_width),
+                    "-".repeat(name_width),
+                    "------",
+                );
+                for (source_type, source_name, count) in &stats.posts_by_source {
+                    println!(
+                        "  {:<type_width$}  {:<name_width$}  {:>6}",
+                        source_type, source_name, count,
+                        type_width = type_width,
+                        name_width = name_width,
+                    );
+                }
+                println!();
+            }
+
+            if !cursors.is_empty() {
+                println!("Sync cursors (last known position per source):");
+                let type_width = cursors.iter()
+                    .map(|(t, _, _, _)| t.len())
+                    .max()
+                    .unwrap_or(4)
+                    .max(4);
+                let name_width = cursors.iter()
+                    .map(|(_, n, _, _)| n.len())
+                    .max()
+                    .unwrap_or(4)
+                    .max(4);
+                let id_width = cursors.iter()
+                    .map(|(_, _, c, _)| c.last_post_id.len())
+                    .max()
+                    .unwrap_or(7)
+                    .max(7);
+
+                println!(
+                    "  {:<type_width$}  {:<name_width$}  {:<id_width$}  {}",
+                    "Type", "Name", "Last ID", "Last Sync",
+                    type_width = type_width,
+                    name_width = name_width,
+                    id_width = id_width,
+                );
+                println!(
+                    "  {}  {}  {}  {}",
+                    "-".repeat(type_width),
+                    "-".repeat(name_width),
+                    "-".repeat(id_width),
+                    "-".repeat(19),
+                );
+                for (source_type, source_name, cursor, updated_at) in &cursors {
+                    use chrono::TimeZone;
+                    let dt = chrono::Utc.timestamp_opt(*updated_at, 0)
+                        .single()
+                        .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    println!(
+                        "  {:<type_width$}  {:<name_width$}  {:<id_width$}  {}",
+                        source_type, source_name, cursor.last_post_id, dt,
+                        type_width = type_width,
+                        name_width = name_width,
+                        id_width = id_width,
+                    );
+                }
+            }
         }
         Command::Auth => {
             let client = api::RedditClient::new(&config.auth).await

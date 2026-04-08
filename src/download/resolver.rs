@@ -28,6 +28,18 @@ pub fn resolve_media_type(post: &Post) -> MediaType {
         None => return MediaType::NoMedia,
     };
 
+    // Guard against malformed URLs (e.g. missing scheme) — don't panic, just
+    // treat them as NoMedia so the rest of the pipeline is unaffected.
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        tracing::debug!("Post {} has malformed URL (no http scheme): {}", post.id, url);
+        return MediaType::NoMedia;
+    }
+
+    // Strip URL fragment (#...) for all subsequent matching; the cleaned URL is
+    // used for comparisons but we preserve the original for the download so that
+    // servers that need query params still receive them.
+    let url_for_matching: &str = url.split('#').next().unwrap_or(&url);
+
     // 2. Reddit gallery
     if post.is_gallery.unwrap_or(false) {
         return MediaType::RedditGallery;
@@ -48,24 +60,32 @@ pub fn resolve_media_type(post: &Post) -> MediaType {
         // is_video but no media.reddit_video — fall through to URL checks
     }
 
-    // 4. i.redd.it direct image/video
-    if url.contains("i.redd.it") {
-        let ext = extension_from_url(&url).unwrap_or_else(|| "jpg".to_string());
+    // 4a. preview.redd.it — image preview URLs, treat as direct images
+    if url_for_matching.contains("preview.redd.it") {
+        let ext = extension_from_url(url_for_matching).unwrap_or_else(|| "jpg".to_string());
+        return MediaType::DirectImage { url, extension: ext };
+    }
+
+    // 4b. i.redd.it direct image/video
+    if url_for_matching.contains("i.redd.it") {
+        let ext = extension_from_url(url_for_matching).unwrap_or_else(|| "jpg".to_string());
         return MediaType::DirectImage { url, extension: ext };
     }
 
     // 5. Imgur album / gallery
-    if url.contains("imgur.com/a/") || url.contains("imgur.com/gallery/") {
+    if url_for_matching.contains("imgur.com/a/") || url_for_matching.contains("imgur.com/gallery/") {
         return MediaType::ImgurAlbum { url };
     }
 
     // 6. Imgur single image (i.imgur.com or imgur.com/<hash>)
-    if url.contains("i.imgur.com") || is_imgur_single(&url) {
+    if url_for_matching.contains("i.imgur.com") || is_imgur_single(url_for_matching) {
         return MediaType::ImgurSingle { url };
     }
 
     // 7. Any URL whose path ends with a known image/video extension
-    if let Some(ext) = extension_from_url(&url) {
+    // Use url_for_matching so query params / fragments don't confuse extension detection,
+    // but pass the original url to DirectImage so query params are preserved for the download.
+    if let Some(ext) = extension_from_url(url_for_matching) {
         if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
             return MediaType::DirectImage { url, extension: ext };
         }
