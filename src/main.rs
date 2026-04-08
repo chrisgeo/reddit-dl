@@ -1,5 +1,6 @@
 mod api;
 mod config;
+mod download;
 mod error;
 mod post;
 mod sources;
@@ -122,29 +123,113 @@ async fn main() -> Result<()> {
             }
 
             std::fs::create_dir_all(&output_dir)?;
-            tracing::info!("Output directory: {}", output_dir.display());
 
-            let _fs = storage::filesystem::OutputManager::new(
+            let fs = storage::filesystem::OutputManager::new(
                 output_dir.clone(),
                 config.download.file_naming.clone(),
             );
 
-            for src in &active_sources {
-                tracing::info!("Fetching from {}/{}", src.source_type(), src.source_name());
+            let db = storage::db::Database::open(&fs.db_path())
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-                let cursor = if full { None } else { None }; // TODO: Phase 6 loads from DB
-                match src.fetch_posts(&client, cursor, limit).await {
+            // HTTP client for non-API downloads (images, videos)
+            let http_client = reqwest::Client::builder()
+                .user_agent("reddit-dl/0.1.0")
+                .timeout(std::time::Duration::from_secs(60))
+                .build()?;
+
+            let mut total_downloaded = 0u32;
+            let mut total_skipped = 0u32;
+            let mut source_errors = 0u32;
+
+            for src in &active_sources {
+                tracing::info!("Syncing {}/{}", src.source_type(), src.source_name());
+
+                // Load cursor unless --full
+                let cursor_data = if full {
+                    None
+                } else {
+                    db.get_cursor(src.source_type(), src.source_name())
+                        .map_err(|e| anyhow::anyhow!("{}", e))?
+                };
+                let cursor_id = cursor_data.as_ref().map(|c| c.last_post_id.as_str());
+
+                match src.fetch_posts(&client, cursor_id, limit).await {
                     Ok(posts) => {
-                        tracing::info!(
-                            "  Found {} posts from {}/{}",
-                            posts.len(),
-                            src.source_type(),
-                            src.source_name()
-                        );
-                        for post in &posts {
-                            tracing::debug!("  - {} | {}", post.id, post.title);
-                            // TODO: Phase 5 will download media/metadata here
+                        if posts.is_empty() {
+                            tracing::info!("  No new posts from {}/{}", src.source_type(), src.source_name());
+                            continue;
                         }
+
+                        tracing::info!("  Found {} posts from {}/{}", posts.len(), src.source_type(), src.source_name());
+
+                        db.begin_transaction().map_err(|e| anyhow::anyhow!("{}", e))?;
+                        let mut batch_downloaded = 0u32;
+                        let mut batch_skipped = 0u32;
+                        let mut newest_post: Option<(&str, f64)> = None;
+
+                        for post in &posts {
+                            // Track newest post for cursor update
+                            if newest_post.is_none() {
+                                newest_post = Some((&post.name, post.created_utc));
+                            }
+
+                            // Dedup check
+                            let already = db.is_downloaded(&post.name)
+                                .map_err(|e| anyhow::anyhow!("{}", e))?;
+                            if already {
+                                batch_skipped += 1;
+                                continue;
+                            }
+
+                            // Download
+                            let file_count = download::download_post(
+                                &client,
+                                &http_client,
+                                post,
+                                src.source_type(),
+                                src.source_name(),
+                                &fs,
+                                &config.download,
+                            ).await.unwrap_or_else(|e| {
+                                tracing::warn!("Download failed for {}: {}", post.id, e);
+                                0
+                            });
+
+                            // Record in DB
+                            db.record_post(
+                                &post.name,
+                                src.source_type(),
+                                src.source_name(),
+                                &post.title,
+                                &post.author,
+                                &post.permalink,
+                                post.created_utc,
+                                file_count,
+                            ).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+                            batch_downloaded += 1;
+                        }
+
+                        // Update cursor to newest post
+                        if let Some((name, utc)) = newest_post {
+                            db.update_cursor(
+                                src.source_type(),
+                                src.source_name(),
+                                name,
+                                utc as i64,
+                            ).map_err(|e| anyhow::anyhow!("{}", e))?;
+                        }
+
+                        db.commit().map_err(|e| anyhow::anyhow!("{}", e))?;
+
+                        tracing::info!(
+                            "  Downloaded: {}, Skipped (dedup): {}",
+                            batch_downloaded,
+                            batch_skipped
+                        );
+                        total_downloaded += batch_downloaded;
+                        total_skipped += batch_skipped;
                     }
                     Err(e) => {
                         tracing::error!(
@@ -153,11 +238,15 @@ async fn main() -> Result<()> {
                             src.source_name(),
                             e
                         );
+                        source_errors += 1;
                     }
                 }
             }
 
-            println!("Sync complete.");
+            println!(
+                "Sync complete. Downloaded: {}, Skipped: {}, Errors: {}",
+                total_downloaded, total_skipped, source_errors
+            );
         }
         Command::Status => {
             // TODO: Phase 7 will implement status display

@@ -10,6 +10,7 @@ async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 directories = "5"
+futures-util = "0.3"
 indicatif = "0.17"
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
 rusqlite = { version = "0.31", features = ["bundled"] }

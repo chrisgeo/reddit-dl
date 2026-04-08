@@ -1257,6 +1257,7 @@ dependencies = [
  "chrono",
  "clap",
  "directories",
+ "futures-util",
  "indicatif",
  "reqwest",
  "rusqlite",
