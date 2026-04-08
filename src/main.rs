@@ -1,4 +1,8 @@
+mod api;
 mod config;
+mod error;
+mod post;
+mod storage;
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
@@ -96,8 +100,13 @@ async fn main() -> Result<()> {
                 "Sync parameters"
             );
 
-            // TODO: Phase 2+ will wire up the full sync pipeline
-            println!("Sync not yet implemented. Config loaded successfully.");
+            tracing::info!("Authenticating...");
+            let _client = api::RedditClient::new(&config.auth).await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            tracing::info!("Authenticated successfully");
+
+            // TODO: Phase 3+ will wire up the full sync pipeline
+            println!("Sync not yet implemented beyond authentication.");
             println!("Output directory: {}", output_dir.display());
             if let Some(ref src) = source {
                 println!("Source filter: {src}");
@@ -114,9 +123,13 @@ async fn main() -> Result<()> {
             println!("Status not yet implemented. Config loaded successfully.");
         }
         Command::Auth => {
-            // TODO: Phase 2 will implement authentication
-            println!("Auth not yet implemented. Config loaded successfully.");
-            println!("Would authenticate as: {}", config.auth.username);
+            let client = api::RedditClient::new(&config.auth).await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            let me = client
+                .get_json::<api::MeResponse>("/api/v1/me", &[])
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            println!("Authenticated as {}", me.name);
         }
     }
 
