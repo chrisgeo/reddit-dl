@@ -2,6 +2,7 @@ mod api;
 mod config;
 mod error;
 mod post;
+mod sources;
 mod storage;
 
 use anyhow::{bail, Result};
@@ -101,22 +102,62 @@ async fn main() -> Result<()> {
             );
 
             tracing::info!("Authenticating...");
-            let _client = api::RedditClient::new(&config.auth).await
+            let client = api::RedditClient::new(&config.auth).await
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
-            tracing::info!("Authenticated successfully");
+            let me = client
+                .get_json::<api::MeResponse>("/api/v1/me", &[])
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            tracing::info!("Authenticated as {}", me.name);
 
-            // TODO: Phase 3+ will wire up the full sync pipeline
-            println!("Sync not yet implemented beyond authentication.");
-            println!("Output directory: {}", output_dir.display());
-            if let Some(ref src) = source {
-                println!("Source filter: {src}");
+            let active_sources = sources::build_sources(
+                &config.sources,
+                &me.name,
+                source.as_deref(),
+            );
+
+            if active_sources.is_empty() {
+                println!("No sources configured or matched the filter.");
+                return Ok(());
             }
-            if full {
-                println!("Full re-scan mode enabled");
+
+            std::fs::create_dir_all(&output_dir)?;
+            tracing::info!("Output directory: {}", output_dir.display());
+
+            let _fs = storage::filesystem::OutputManager::new(
+                output_dir.clone(),
+                config.download.file_naming.clone(),
+            );
+
+            for src in &active_sources {
+                tracing::info!("Fetching from {}/{}", src.source_type(), src.source_name());
+
+                let cursor = if full { None } else { None }; // TODO: Phase 6 loads from DB
+                match src.fetch_posts(&client, cursor, limit).await {
+                    Ok(posts) => {
+                        tracing::info!(
+                            "  Found {} posts from {}/{}",
+                            posts.len(),
+                            src.source_type(),
+                            src.source_name()
+                        );
+                        for post in &posts {
+                            tracing::debug!("  - {} | {}", post.id, post.title);
+                            // TODO: Phase 5 will download media/metadata here
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to fetch from {}/{}: {}",
+                            src.source_type(),
+                            src.source_name(),
+                            e
+                        );
+                    }
+                }
             }
-            if let Some(lim) = limit {
-                println!("Limit: {lim} posts per source");
-            }
+
+            println!("Sync complete.");
         }
         Command::Status => {
             // TODO: Phase 7 will implement status display
