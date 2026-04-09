@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 
+use super::Source;
 use crate::api::endpoints;
 use crate::api::RedditClient;
 use crate::error::Result;
 use crate::post::Post;
-use super::Source;
 
 pub struct SubredditSource {
     name: String,

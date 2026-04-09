@@ -13,7 +13,10 @@ use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "reddit-dl", about = "Bulk Reddit downloader with incremental sync")]
+#[command(
+    name = "reddit-dl",
+    about = "Bulk Reddit downloader with incremental sync"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -96,15 +99,11 @@ async fn main() -> Result<()> {
         } => {
             let output_dir = output.unwrap_or_else(|| config.resolve_output_dir());
             tracing::info!("Syncing to {}", output_dir.display());
-            tracing::debug!(
-                ?source,
-                full,
-                ?limit,
-                "Sync parameters"
-            );
+            tracing::debug!(?source, full, ?limit, "Sync parameters");
 
             tracing::info!("Authenticating...");
-            let client = api::RedditClient::new(&config.auth).await
+            let client = api::RedditClient::new(&config.auth)
+                .await
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
             let me = client
                 .get_json::<api::MeResponse>("/api/v1/me", &[])
@@ -112,11 +111,8 @@ async fn main() -> Result<()> {
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
             tracing::info!("Authenticated as {}", me.name);
 
-            let active_sources = sources::build_sources(
-                &config.sources,
-                &me.name,
-                source.as_deref(),
-            );
+            let active_sources =
+                sources::build_sources(&config.sources, &me.name, source.as_deref());
 
             if active_sources.is_empty() {
                 println!("No sources configured or matched the filter.");
@@ -130,8 +126,8 @@ async fn main() -> Result<()> {
                 config.download.file_naming.clone(),
             );
 
-            let db = storage::db::Database::open(&fs.db_path())
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            let db =
+                storage::db::Database::open(&fs.db_path()).map_err(|e| anyhow::anyhow!("{}", e))?;
 
             // HTTP client for non-API downloads (images, videos)
             let http_client = reqwest::Client::builder()
@@ -154,9 +150,9 @@ async fn main() -> Result<()> {
                 tracing::info!("Syncing {}/{}", src.source_type(), src.source_name());
 
                 // Show fetch spinner while we retrieve the post list
-                let spinner = tracker.as_ref().map(|t| {
-                    t.add_fetch_spinner(src.source_type(), src.source_name())
-                });
+                let spinner = tracker
+                    .as_ref()
+                    .map(|t| t.add_fetch_spinner(src.source_type(), src.source_name()));
 
                 // Load cursor unless --full
                 let cursor_data = if full {
@@ -175,18 +171,32 @@ async fn main() -> Result<()> {
                         }
 
                         if posts.is_empty() {
-                            tracing::info!("  No new posts from {}/{}", src.source_type(), src.source_name());
+                            tracing::info!(
+                                "  No new posts from {}/{}",
+                                src.source_type(),
+                                src.source_name()
+                            );
                             continue;
                         }
 
-                        tracing::info!("  Found {} posts from {}/{}", posts.len(), src.source_type(), src.source_name());
+                        tracing::info!(
+                            "  Found {} posts from {}/{}",
+                            posts.len(),
+                            src.source_type(),
+                            src.source_name()
+                        );
 
                         // Switch to a deterministic progress bar now that we know the total
                         let bar = tracker.as_ref().map(|t| {
-                            t.add_source_bar(src.source_type(), src.source_name(), posts.len() as u64)
+                            t.add_source_bar(
+                                src.source_type(),
+                                src.source_name(),
+                                posts.len() as u64,
+                            )
                         });
 
-                        db.begin_transaction().map_err(|e| anyhow::anyhow!("{}", e))?;
+                        db.begin_transaction()
+                            .map_err(|e| anyhow::anyhow!("{}", e))?;
                         let mut batch_downloaded = 0u32;
                         let mut batch_skipped = 0u32;
                         let mut newest_post: Option<(&str, f64)> = None;
@@ -198,7 +208,8 @@ async fn main() -> Result<()> {
                             }
 
                             // Dedup check
-                            let already = db.is_downloaded(&post.name)
+                            let already = db
+                                .is_downloaded(&post.name)
                                 .map_err(|e| anyhow::anyhow!("{}", e))?;
                             if already {
                                 batch_skipped += 1;
@@ -221,22 +232,25 @@ async fn main() -> Result<()> {
                                 src.source_name(),
                                 &fs,
                                 &config.download,
-                            ).await.unwrap_or_else(|e| {
+                            )
+                            .await
+                            .unwrap_or_else(|e| {
                                 tracing::warn!("Download failed for {}: {}", post.id, e);
                                 0
                             });
 
                             // Record in DB
-                            db.record_post(
-                                &post.name,
-                                src.source_type(),
-                                src.source_name(),
-                                &post.title,
-                                &post.author,
-                                &post.permalink,
-                                post.created_utc,
-                                file_count,
-                            ).map_err(|e| anyhow::anyhow!("{}", e))?;
+                            db.record_post(crate::storage::db::RecordPost {
+                                post_id: &post.name,
+                                source_type: src.source_type(),
+                                source_name: src.source_name(),
+                                title: &post.title,
+                                author: &post.author,
+                                permalink: &post.permalink,
+                                created_utc: post.created_utc,
+                                media_count: file_count,
+                            })
+                            .map_err(|e| anyhow::anyhow!("{}", e))?;
 
                             batch_downloaded += 1;
                             if let Some(pb) = &bar {
@@ -255,7 +269,8 @@ async fn main() -> Result<()> {
                                 src.source_name(),
                                 name,
                                 utc as i64,
-                            ).map_err(|e| anyhow::anyhow!("{}", e))?;
+                            )
+                            .map_err(|e| anyhow::anyhow!("{}", e))?;
                         }
 
                         db.commit().map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -304,8 +319,7 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
 
-            let db = storage::db::Database::open(&db_path)
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            let db = storage::db::Database::open(&db_path).map_err(|e| anyhow::anyhow!("{}", e))?;
 
             let stats = db.get_stats().map_err(|e| anyhow::anyhow!("{}", e))?;
             let cursors = db.get_all_cursors().map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -323,12 +337,16 @@ async fn main() -> Result<()> {
             if !stats.posts_by_source.is_empty() {
                 println!("Posts by source:");
                 // Calculate column widths
-                let type_width = stats.posts_by_source.iter()
+                let type_width = stats
+                    .posts_by_source
+                    .iter()
                     .map(|(t, _, _)| t.len())
                     .max()
                     .unwrap_or(4)
                     .max(4);
-                let name_width = stats.posts_by_source.iter()
+                let name_width = stats
+                    .posts_by_source
+                    .iter()
                     .map(|(_, n, _)| n.len())
                     .max()
                     .unwrap_or(4)
@@ -336,20 +354,23 @@ async fn main() -> Result<()> {
 
                 println!(
                     "  {:<type_width$}  {:<name_width$}  {:>6}",
-                    "Type", "Name", "Posts",
+                    "Type",
+                    "Name",
+                    "Posts",
                     type_width = type_width,
                     name_width = name_width,
                 );
                 println!(
-                    "  {}  {}  {}",
+                    "  {}  {}  ------",
                     "-".repeat(type_width),
                     "-".repeat(name_width),
-                    "------",
                 );
                 for (source_type, source_name, count) in &stats.posts_by_source {
                     println!(
                         "  {:<type_width$}  {:<name_width$}  {:>6}",
-                        source_type, source_name, count,
+                        source_type,
+                        source_name,
+                        count,
                         type_width = type_width,
                         name_width = name_width,
                     );
@@ -359,25 +380,30 @@ async fn main() -> Result<()> {
 
             if !cursors.is_empty() {
                 println!("Sync cursors (last known position per source):");
-                let type_width = cursors.iter()
+                let type_width = cursors
+                    .iter()
                     .map(|(t, _, _, _)| t.len())
                     .max()
                     .unwrap_or(4)
                     .max(4);
-                let name_width = cursors.iter()
+                let name_width = cursors
+                    .iter()
                     .map(|(_, n, _, _)| n.len())
                     .max()
                     .unwrap_or(4)
                     .max(4);
-                let id_width = cursors.iter()
+                let id_width = cursors
+                    .iter()
                     .map(|(_, _, c, _)| c.last_post_id.len())
                     .max()
                     .unwrap_or(7)
                     .max(7);
 
                 println!(
-                    "  {:<type_width$}  {:<name_width$}  {:<id_width$}  {}",
-                    "Type", "Name", "Last ID", "Last Sync",
+                    "  {:<type_width$}  {:<name_width$}  {:<id_width$}  Last Sync",
+                    "Type",
+                    "Name",
+                    "Last ID",
                     type_width = type_width,
                     name_width = name_width,
                     id_width = id_width,
@@ -391,13 +417,17 @@ async fn main() -> Result<()> {
                 );
                 for (source_type, source_name, cursor, updated_at) in &cursors {
                     use chrono::TimeZone;
-                    let dt = chrono::Utc.timestamp_opt(*updated_at, 0)
+                    let dt = chrono::Utc
+                        .timestamp_opt(*updated_at, 0)
                         .single()
                         .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
                         .unwrap_or_else(|| "unknown".to_string());
                     println!(
                         "  {:<type_width$}  {:<name_width$}  {:<id_width$}  {}",
-                        source_type, source_name, cursor.last_post_id, dt,
+                        source_type,
+                        source_name,
+                        cursor.last_post_id,
+                        dt,
                         type_width = type_width,
                         name_width = name_width,
                         id_width = id_width,
@@ -406,7 +436,8 @@ async fn main() -> Result<()> {
             }
         }
         Command::Auth => {
-            let client = api::RedditClient::new(&config.auth).await
+            let client = api::RedditClient::new(&config.auth)
+                .await
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
             let me = client
                 .get_json::<api::MeResponse>("/api/v1/me", &[])

@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use crate::api::RedditClient;
 use crate::api::endpoints::get_post_comments;
+use crate::api::RedditClient;
 use crate::error::Result;
 use crate::post::Post;
 
@@ -24,11 +24,7 @@ pub fn save_self_post(post: &Post, path: &Path) -> Result<()> {
 }
 
 /// Fetch comments for a post and write them as a pretty-printed JSON file.
-pub async fn save_comments(
-    client: &RedditClient,
-    post: &Post,
-    path: &Path,
-) -> Result<()> {
+pub async fn save_comments(client: &RedditClient, post: &Post, path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }

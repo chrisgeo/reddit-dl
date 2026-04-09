@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 
+use super::Source;
 use crate::api::endpoints;
 use crate::api::RedditClient;
 use crate::error::Result;
 use crate::post::Post;
-use super::Source;
 
 /// Meta-source that fetches the friends list, then fetches each friend's posts.
 /// When used in the sync loop, this produces separate source entries per friend
@@ -15,7 +15,9 @@ pub struct FriendsSource {
 
 impl FriendsSource {
     pub fn new(username: String) -> Self {
-        Self { _username: username }
+        Self {
+            _username: username,
+        }
     }
 }
 

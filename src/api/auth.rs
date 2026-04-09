@@ -31,12 +31,9 @@ pub async fn authenticate(
     password: &str,
 ) -> Result<AuthToken> {
     let client = reqwest::Client::builder()
-        .user_agent(format!(
-            "linux:reddit-dl:0.1.0 (by /u/{})",
-            username
-        ))
+        .user_agent(format!("linux:reddit-dl:0.1.0 (by /u/{})", username))
         .build()
-        .map_err(|e| Error::Http(e))?;
+        .map_err(Error::Http)?;
 
     let response = client
         .post("https://www.reddit.com/api/v1/access_token")

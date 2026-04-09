@@ -3,13 +3,25 @@ use crate::post::Post;
 /// The kind of media a post contains, used to dispatch to the right downloader.
 #[derive(Debug)]
 pub enum MediaType {
-    DirectImage { url: String, extension: String },
-    RedditVideo { video_url: String, audio_url: Option<String> },
+    DirectImage {
+        url: String,
+        extension: String,
+    },
+    RedditVideo {
+        video_url: String,
+        audio_url: Option<String>,
+    },
     RedditGallery,
-    ImgurSingle { url: String },
-    ImgurAlbum { url: String },
+    ImgurSingle {
+        url: String,
+    },
+    ImgurAlbum {
+        url: String,
+    },
     SelfPost,
-    ExternalLink { url: String },
+    ExternalLink {
+        url: String,
+    },
     NoMedia,
 }
 
@@ -31,7 +43,11 @@ pub fn resolve_media_type(post: &Post) -> MediaType {
     // Guard against malformed URLs (e.g. missing scheme) — don't panic, just
     // treat them as NoMedia so the rest of the pipeline is unaffected.
     if !url.starts_with("http://") && !url.starts_with("https://") {
-        tracing::debug!("Post {} has malformed URL (no http scheme): {}", post.id, url);
+        tracing::debug!(
+            "Post {} has malformed URL (no http scheme): {}",
+            post.id,
+            url
+        );
         return MediaType::NoMedia;
     }
 
@@ -63,17 +79,24 @@ pub fn resolve_media_type(post: &Post) -> MediaType {
     // 4a. preview.redd.it — image preview URLs, treat as direct images
     if url_for_matching.contains("preview.redd.it") {
         let ext = extension_from_url(url_for_matching).unwrap_or_else(|| "jpg".to_string());
-        return MediaType::DirectImage { url, extension: ext };
+        return MediaType::DirectImage {
+            url,
+            extension: ext,
+        };
     }
 
     // 4b. i.redd.it direct image/video
     if url_for_matching.contains("i.redd.it") {
         let ext = extension_from_url(url_for_matching).unwrap_or_else(|| "jpg".to_string());
-        return MediaType::DirectImage { url, extension: ext };
+        return MediaType::DirectImage {
+            url,
+            extension: ext,
+        };
     }
 
     // 5. Imgur album / gallery
-    if url_for_matching.contains("imgur.com/a/") || url_for_matching.contains("imgur.com/gallery/") {
+    if url_for_matching.contains("imgur.com/a/") || url_for_matching.contains("imgur.com/gallery/")
+    {
         return MediaType::ImgurAlbum { url };
     }
 
@@ -87,7 +110,10 @@ pub fn resolve_media_type(post: &Post) -> MediaType {
     // but pass the original url to DirectImage so query params are preserved for the download.
     if let Some(ext) = extension_from_url(url_for_matching) {
         if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
-            return MediaType::DirectImage { url, extension: ext };
+            return MediaType::DirectImage {
+                url,
+                extension: ext,
+            };
         }
     }
 

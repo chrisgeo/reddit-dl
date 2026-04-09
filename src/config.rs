@@ -21,6 +21,7 @@ pub struct AuthConfig {
     pub password: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Clone)]
 pub struct OutputConfig {
     #[serde(default = "default_output_dir")]
@@ -38,6 +39,7 @@ impl Default for OutputConfig {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Clone)]
 pub struct DownloadConfig {
     #[serde(default = "default_max_concurrent")]
@@ -112,9 +114,9 @@ impl Config {
 
     pub fn resolve_output_dir(&self) -> PathBuf {
         let dir = &self.output.directory;
-        if dir.starts_with("~/") {
+        if let Some(stripped) = dir.strip_prefix("~/") {
             if let Some(home) = dirs_home() {
-                return home.join(&dir[2..]);
+                return home.join(stripped);
             }
         }
         PathBuf::from(dir)

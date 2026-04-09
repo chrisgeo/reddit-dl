@@ -1,9 +1,9 @@
 use serde::Deserialize;
 
+use super::client::RedditClient;
+use super::types::Listing;
 use crate::error::Result;
 use crate::post::Post;
-use super::client::RedditClient;
-use super::types::{Listing, Thing};
 
 /// Response from /api/v1/me/friends
 #[derive(Debug, Deserialize)]
@@ -16,6 +16,7 @@ pub struct FriendsListData {
     pub children: Vec<Friend>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct Friend {
     pub name: String,
@@ -26,6 +27,7 @@ pub struct Friend {
 }
 
 /// A subreddit from /subreddits/mine/subscriber
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct Subreddit {
     pub display_name: String,
@@ -70,7 +72,11 @@ pub async fn get_user_posts(
     limit: u32,
 ) -> Result<(Vec<Post>, Option<String>)> {
     let limit_str = limit.to_string();
-    let mut params = vec![("limit", limit_str.as_str()), ("sort", "new"), ("raw_json", "1")];
+    let mut params = vec![
+        ("limit", limit_str.as_str()),
+        ("sort", "new"),
+        ("raw_json", "1"),
+    ];
     let after_owned;
     if let Some(a) = after {
         after_owned = a.to_string();

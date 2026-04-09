@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 
+use super::Source;
 use crate::api::endpoints;
 use crate::api::RedditClient;
 use crate::error::Result;
 use crate::post::Post;
-use super::Source;
 
 /// Source that discovers followed users by finding subscribed subreddits
 /// with the "u_" prefix (Reddit's follow mechanism subscribes you to u_username).
@@ -14,7 +14,9 @@ pub struct FollowsSource {
 
 impl FollowsSource {
     pub fn new(username: String) -> Self {
-        Self { _username: username }
+        Self {
+            _username: username,
+        }
     }
 }
 
@@ -39,8 +41,7 @@ impl Source for FollowsSource {
         let mut after: Option<String> = None;
 
         loop {
-            let (subs, next_after) =
-                endpoints::get_subscriptions(client, after.as_deref()).await?;
+            let (subs, next_after) = endpoints::get_subscriptions(client, after.as_deref()).await?;
 
             if subs.is_empty() {
                 break;

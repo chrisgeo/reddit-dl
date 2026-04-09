@@ -9,7 +9,6 @@ use crate::post::Post;
 use crate::storage::filesystem::OutputManager;
 use crate::storage::metadata::write_metadata;
 use resolver::MediaType;
-use std::path::Path;
 
 /// Download all media associated with `post` and write optional sidecars.
 ///
@@ -62,6 +61,7 @@ pub async fn download_post(
 
 // ── internal dispatcher ───────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn dispatch(
     http_client: &reqwest::Client,
     client: &RedditClient,
@@ -75,13 +75,8 @@ async fn dispatch(
     match media_type {
         // ── Self-post (text) ──────────────────────────────────────────────────
         MediaType::SelfPost => {
-            let path = output.post_path(
-                source_type,
-                source_name,
-                &post.id,
-                Some(&post.title),
-                "md",
-            );
+            let path =
+                output.post_path(source_type, source_name, &post.id, Some(&post.title), "md");
             match text::save_self_post(post, &path) {
                 Ok(()) => tracing::debug!("Saved self-post {}", post.id),
                 Err(e) => tracing::warn!("Failed to save self-post {}: {}", post.id, e),
@@ -122,28 +117,25 @@ async fn dispatch(
                     Ok(1)
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to download direct media for post {}: {}", post.id, e);
+                    tracing::warn!(
+                        "Failed to download direct media for post {}: {}",
+                        post.id,
+                        e
+                    );
                     Ok(0)
                 }
             }
         }
 
         // ── Reddit-hosted video ───────────────────────────────────────────────
-        MediaType::RedditVideo { video_url, audio_url } => {
-            let path = output.post_path(
-                source_type,
-                source_name,
-                &post.id,
-                Some(&post.title),
-                "mp4",
-            );
-            match media::download_reddit_video(
-                http_client,
-                video_url,
-                audio_url.as_deref(),
-                &path,
-            )
-            .await
+        MediaType::RedditVideo {
+            video_url,
+            audio_url,
+        } => {
+            let path =
+                output.post_path(source_type, source_name, &post.id, Some(&post.title), "mp4");
+            match media::download_reddit_video(http_client, video_url, audio_url.as_deref(), &path)
+                .await
             {
                 Ok(()) => {
                     tracing::debug!("Downloaded Reddit video for post {}", post.id);
@@ -165,19 +157,11 @@ async fn dispatch(
             let gallery_dir = output.gallery_dir(source_type, source_name, &post.id);
             match media::download_gallery(http_client, post, &gallery_dir).await {
                 Ok(n) => {
-                    tracing::debug!(
-                        "Downloaded {} gallery images for post {}",
-                        n,
-                        post.id
-                    );
+                    tracing::debug!("Downloaded {} gallery images for post {}", n, post.id);
                     Ok(n)
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Failed to download gallery for post {}: {}",
-                        post.id,
-                        e
-                    );
+                    tracing::warn!("Failed to download gallery for post {}: {}", post.id, e);
                     Ok(0)
                 }
             }
@@ -186,15 +170,9 @@ async fn dispatch(
         // ── Imgur single ──────────────────────────────────────────────────────
         MediaType::ImgurSingle { url } => {
             // Resolve to a direct image URL: add .jpg if no extension present
-            let (download_url, ext) =
-                resolve_imgur_single_url(url);
-            let path = output.post_path(
-                source_type,
-                source_name,
-                &post.id,
-                Some(&post.title),
-                &ext,
-            );
+            let (download_url, ext) = resolve_imgur_single_url(url);
+            let path =
+                output.post_path(source_type, source_name, &post.id, Some(&post.title), &ext);
             match media::download_direct(http_client, &download_url, &path).await {
                 Ok(()) => {
                     tracing::debug!("Downloaded imgur single for post {}", post.id);
@@ -248,9 +226,7 @@ async fn dispatch(
 fn resolve_imgur_single_url(url: &str) -> (String, String) {
     // If it's already a direct image URL with extension, use as-is
     if let Some(ext) = resolver::extension_from_url(url) {
-        if ["jpg", "jpeg", "png", "gif", "webp", "mp4", "gifv"]
-            .contains(&ext.as_str())
-        {
+        if ["jpg", "jpeg", "png", "gif", "webp", "mp4", "gifv"].contains(&ext.as_str()) {
             // Convert .gifv to .mp4 (Imgur serves mp4 for .gifv)
             if ext == "gifv" {
                 let mp4_url = url.replace(".gifv", ".mp4");

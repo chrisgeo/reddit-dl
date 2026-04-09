@@ -4,9 +4,9 @@ use serde::de::DeserializeOwned;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::Instant;
 
+use super::auth::{authenticate, AuthToken};
 use crate::config::AuthConfig;
 use crate::error::{Error, Result};
-use super::auth::{authenticate, AuthToken};
 
 pub struct RedditClient {
     client: reqwest::Client,
@@ -27,10 +27,7 @@ fn is_transient_network_error(e: &reqwest::Error) -> bool {
 
 impl RedditClient {
     pub async fn new(config: &AuthConfig) -> Result<Self> {
-        let user_agent = format!(
-            "linux:reddit-dl:0.1.0 (by /u/{})",
-            config.username
-        );
+        let user_agent = format!("linux:reddit-dl:0.1.0 (by /u/{})", config.username);
 
         let client = reqwest::Client::builder()
             .user_agent(&user_agent)

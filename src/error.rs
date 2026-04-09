@@ -14,6 +14,7 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("Database error: {0}")]
     Db(String),
+    #[allow(dead_code)]
     #[error("Config error: {0}")]
     Config(String),
     #[error("{0}")]

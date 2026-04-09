@@ -1,5 +1,5 @@
-pub mod friends;
 pub mod follows;
+pub mod friends;
 pub mod saved;
 pub mod subreddit;
 pub mod user;

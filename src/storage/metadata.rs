@@ -19,7 +19,6 @@ pub struct PostMetadata {
 }
 
 pub fn write_metadata(path: &Path, metadata: &PostMetadata) -> std::io::Result<()> {
-    let json = serde_json::to_string_pretty(metadata)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string_pretty(metadata).map_err(std::io::Error::other)?;
     std::fs::write(path, json)
 }

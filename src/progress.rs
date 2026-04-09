@@ -15,11 +15,9 @@ impl ProgressTracker {
     /// Format: "[friends/alice] ⣾ Fetching posts..."
     pub fn add_fetch_spinner(&self, source_type: &str, source_name: &str) -> ProgressBar {
         let pb = self.multi.add(ProgressBar::new_spinner());
-        let style = ProgressStyle::with_template(
-            "{prefix} {spinner} {msg}",
-        )
-        .unwrap()
-        .tick_chars("⣾⣽⣻⢿⡿⣟⣯⣷");
+        let style = ProgressStyle::with_template("{prefix} {spinner} {msg}")
+            .unwrap()
+            .tick_chars("⣾⣽⣻⢿⡿⣟⣯⣷");
 
         pb.set_style(style);
         pb.set_prefix(format!("[{}/{}]", source_type, source_name));
@@ -30,18 +28,12 @@ impl ProgressTracker {
 
     /// Create a progress bar for the download phase (total is known).
     /// Format: "[friends/alice] ████░░░░ 15/50 posts (3 downloaded, 12 skipped)"
-    pub fn add_source_bar(
-        &self,
-        source_type: &str,
-        source_name: &str,
-        total: u64,
-    ) -> ProgressBar {
+    pub fn add_source_bar(&self, source_type: &str, source_name: &str, total: u64) -> ProgressBar {
         let pb = self.multi.add(ProgressBar::new(total));
-        let style = ProgressStyle::with_template(
-            "{prefix} {bar:30.cyan/blue} {pos}/{len} posts ({msg})",
-        )
-        .unwrap()
-        .progress_chars("█▓░");
+        let style =
+            ProgressStyle::with_template("{prefix} {bar:30.cyan/blue} {pos}/{len} posts ({msg})")
+                .unwrap()
+                .progress_chars("█▓░");
 
         pb.set_style(style);
         pb.set_prefix(format!("[{}/{}]", source_type, source_name));

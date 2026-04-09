@@ -1,5 +1,5 @@
 use crate::config::FileNaming;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub struct OutputManager {
     base_dir: PathBuf,

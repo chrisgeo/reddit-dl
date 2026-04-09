@@ -1,7 +1,8 @@
+use crate::error::{Error, Result};
 use rusqlite::{params, Connection};
 use std::path::Path;
-use crate::error::{Error, Result};
 
+#[allow(dead_code)]
 pub struct Cursor {
     pub last_post_id: String,
     pub last_post_utc: i64,
@@ -10,6 +11,18 @@ pub struct Cursor {
 pub struct Stats {
     pub total_posts: u64,
     pub posts_by_source: Vec<(String, String, u64)>, // (source_type, source_name, count)
+}
+
+/// Parameters for [`Database::record_post`].
+pub struct RecordPost<'a> {
+    pub post_id: &'a str,
+    pub source_type: &'a str,
+    pub source_name: &'a str,
+    pub title: &'a str,
+    pub author: &'a str,
+    pub permalink: &'a str,
+    pub created_utc: f64,
+    pub media_count: u32,
 }
 
 pub struct Database {
@@ -68,17 +81,7 @@ impl Database {
     }
 
     /// Record a downloaded post. Uses INSERT OR IGNORE so duplicate calls are no-ops.
-    pub fn record_post(
-        &self,
-        post_id: &str,
-        source_type: &str,
-        source_name: &str,
-        title: &str,
-        author: &str,
-        permalink: &str,
-        created_utc: f64,
-        media_count: u32,
-    ) -> Result<()> {
+    pub fn record_post(&self, p: RecordPost<'_>) -> Result<()> {
         let downloaded_at = chrono::Utc::now().timestamp();
         self.conn
             .execute(
@@ -87,15 +90,15 @@ impl Database {
                      created_utc, downloaded_at, media_count)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
-                    post_id,
-                    source_type,
-                    source_name,
-                    title,
-                    author,
-                    permalink,
-                    created_utc as i64,
+                    p.post_id,
+                    p.source_type,
+                    p.source_name,
+                    p.title,
+                    p.author,
+                    p.permalink,
+                    p.created_utc as i64,
                     downloaded_at,
-                    media_count,
+                    p.media_count,
                 ],
             )
             .map_err(|e| Error::Db(e.to_string()))?;
@@ -142,7 +145,13 @@ impl Database {
                 "INSERT OR REPLACE INTO cursors
                     (source_type, source_name, last_post_id, last_post_utc, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![source_type, source_name, last_post_id, last_post_utc, updated_at],
+                params![
+                    source_type,
+                    source_name,
+                    last_post_id,
+                    last_post_utc,
+                    updated_at
+                ],
             )
             .map_err(|e| Error::Db(e.to_string()))?;
         Ok(())
@@ -152,9 +161,7 @@ impl Database {
     pub fn get_stats(&self) -> Result<Stats> {
         let total_posts: u64 = self
             .conn
-            .query_row("SELECT COUNT(*) FROM posts", [], |row| {
-                row.get::<_, i64>(0)
-            })
+            .query_row("SELECT COUNT(*) FROM posts", [], |row| row.get::<_, i64>(0))
             .map_err(|e| Error::Db(e.to_string()))? as u64;
 
         let mut stmt = self
@@ -234,6 +241,7 @@ impl Database {
     }
 
     /// Rollback a transaction.
+    #[allow(dead_code)]
     pub fn rollback(&self) -> Result<()> {
         self.conn
             .execute_batch("ROLLBACK")
@@ -249,7 +257,7 @@ mod tests {
     fn open_temp_db() -> Database {
         let dir = tempdir().unwrap();
         // Keep dir alive by leaking it for the test — fine in unit tests
-        let path = dir.into_path().join("test.db");
+        let path = dir.keep().join("test.db");
         Database::open(&path).unwrap()
     }
 
@@ -262,16 +270,16 @@ mod tests {
     #[test]
     fn test_record_and_check_downloaded() {
         let db = open_temp_db();
-        db.record_post(
-            "t3_abc123",
-            "subreddit",
-            "rust",
-            "Cool post",
-            "ferris",
-            "/r/rust/comments/abc123",
-            1_700_000_000.0,
-            1,
-        )
+        db.record_post(RecordPost {
+            post_id: "t3_abc123",
+            source_type: "subreddit",
+            source_name: "rust",
+            title: "Cool post",
+            author: "ferris",
+            permalink: "/r/rust/comments/abc123",
+            created_utc: 1_700_000_000.0,
+            media_count: 1,
+        })
         .unwrap();
         assert!(db.is_downloaded("t3_abc123").unwrap());
     }
@@ -280,16 +288,16 @@ mod tests {
     fn test_record_post_is_idempotent() {
         let db = open_temp_db();
         for _ in 0..3 {
-            db.record_post(
-                "t3_dup",
-                "subreddit",
-                "pics",
-                "Duplicate",
-                "user",
-                "/r/pics/dup",
-                1_700_000_001.0,
-                0,
-            )
+            db.record_post(RecordPost {
+                post_id: "t3_dup",
+                source_type: "subreddit",
+                source_name: "pics",
+                title: "Duplicate",
+                author: "user",
+                permalink: "/r/pics/dup",
+                created_utc: 1_700_000_001.0,
+                media_count: 0,
+            })
             .unwrap();
         }
         let stats = db.get_stats().unwrap();
@@ -325,9 +333,39 @@ mod tests {
     #[test]
     fn test_get_stats_aggregates_by_source() {
         let db = open_temp_db();
-        db.record_post("p1", "subreddit", "rust", "T", "u", "/", 0.0, 1).unwrap();
-        db.record_post("p2", "subreddit", "rust", "T", "u", "/", 0.0, 1).unwrap();
-        db.record_post("p3", "friends", "alice", "T", "u", "/", 0.0, 1).unwrap();
+        db.record_post(RecordPost {
+            post_id: "p1",
+            source_type: "subreddit",
+            source_name: "rust",
+            title: "T",
+            author: "u",
+            permalink: "/",
+            created_utc: 0.0,
+            media_count: 1,
+        })
+        .unwrap();
+        db.record_post(RecordPost {
+            post_id: "p2",
+            source_type: "subreddit",
+            source_name: "rust",
+            title: "T",
+            author: "u",
+            permalink: "/",
+            created_utc: 0.0,
+            media_count: 1,
+        })
+        .unwrap();
+        db.record_post(RecordPost {
+            post_id: "p3",
+            source_type: "friends",
+            source_name: "alice",
+            title: "T",
+            author: "u",
+            permalink: "/",
+            created_utc: 0.0,
+            media_count: 1,
+        })
+        .unwrap();
 
         let stats = db.get_stats().unwrap();
         assert_eq!(stats.total_posts, 3);
@@ -362,8 +400,17 @@ mod tests {
     fn test_transaction_commit() {
         let db = open_temp_db();
         db.begin_transaction().unwrap();
-        db.record_post("tx1", "subreddit", "test", "T", "u", "/", 0.0, 0)
-            .unwrap();
+        db.record_post(RecordPost {
+            post_id: "tx1",
+            source_type: "subreddit",
+            source_name: "test",
+            title: "T",
+            author: "u",
+            permalink: "/",
+            created_utc: 0.0,
+            media_count: 0,
+        })
+        .unwrap();
         db.commit().unwrap();
         assert!(db.is_downloaded("tx1").unwrap());
     }
@@ -372,8 +419,17 @@ mod tests {
     fn test_transaction_rollback() {
         let db = open_temp_db();
         db.begin_transaction().unwrap();
-        db.record_post("tx2", "subreddit", "test", "T", "u", "/", 0.0, 0)
-            .unwrap();
+        db.record_post(RecordPost {
+            post_id: "tx2",
+            source_type: "subreddit",
+            source_name: "test",
+            title: "T",
+            author: "u",
+            permalink: "/",
+            created_utc: 0.0,
+            media_count: 0,
+        })
+        .unwrap();
         db.rollback().unwrap();
         assert!(!db.is_downloaded("tx2").unwrap());
     }

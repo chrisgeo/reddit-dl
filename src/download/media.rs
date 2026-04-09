@@ -1,8 +1,8 @@
+use futures_util::StreamExt;
 use std::path::Path;
 use std::time::Duration;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
-use futures_util::StreamExt;
 
 use crate::error::{Error, Result};
 use crate::post::Post;
@@ -21,11 +21,7 @@ const DOWNLOAD_RETRIES: u32 = 2;
 /// errors or 5xx responses.  Returns an immediate error (no retry) on 403/404.
 /// Deletes the output file and returns an error if the downloaded file is empty
 /// or exceeds `MAX_FILE_SIZE`.
-pub async fn download_direct(
-    http_client: &reqwest::Client,
-    url: &str,
-    path: &Path,
-) -> Result<()> {
+pub async fn download_direct(http_client: &reqwest::Client, url: &str, path: &Path) -> Result<()> {
     let total_attempts = DOWNLOAD_RETRIES + 1;
     let mut last_err: Option<Error> = None;
 
@@ -62,7 +58,10 @@ pub async fn download_direct(
     }
 
     Err(last_err.unwrap_or_else(|| {
-        Error::Other(format!("All {} download attempts failed for {}", total_attempts, url))
+        Error::Other(format!(
+            "All {} download attempts failed for {}",
+            total_attempts, url
+        ))
     }))
 }
 
@@ -96,10 +95,7 @@ async fn attempt_download_direct(
     }
 
     if !status.is_success() {
-        return Err(Error::Other(format!(
-            "HTTP {} downloading {}",
-            status, url
-        )));
+        return Err(Error::Other(format!("HTTP {} downloading {}", status, url)));
     }
 
     // Check Content-Length up front to avoid wasting time on huge files
@@ -166,9 +162,7 @@ async fn attempt_download_direct(
 /// Returns true if the error is permanent and should not be retried.
 fn is_permanent_download_error(e: &Error) -> bool {
     match e {
-        Error::Other(msg) => {
-            msg.contains("HTTP 403") || msg.contains("HTTP 404")
-        }
+        Error::Other(msg) => msg.contains("HTTP 403") || msg.contains("HTTP 404"),
         _ => false,
     }
 }
@@ -206,9 +200,12 @@ pub async fn download_reddit_video(
                 let status = tokio::process::Command::new("ffmpeg")
                     .args([
                         "-y",
-                        "-i", &tmp_video.to_string_lossy(),
-                        "-i", &tmp_audio.to_string_lossy(),
-                        "-c", "copy",
+                        "-i",
+                        &tmp_video.to_string_lossy(),
+                        "-i",
+                        &tmp_audio.to_string_lossy(),
+                        "-c",
+                        "copy",
                         &path.to_string_lossy(),
                     ])
                     .status()
@@ -230,10 +227,7 @@ pub async fn download_reddit_video(
             }
             Ok(()) => {
                 // Audio downloaded but no ffmpeg — save video-only
-                tracing::warn!(
-                    "ffmpeg not found; saving video-only for {}",
-                    path.display()
-                );
+                tracing::warn!("ffmpeg not found; saving video-only for {}", path.display());
                 let _ = fs::remove_file(&tmp_audio).await;
             }
             Err(e) => {
@@ -318,7 +312,9 @@ pub async fn download_gallery(
         };
 
         // Prefer the mp4 for animated images, then the direct URL
-        let raw_url = source.mp4.as_deref()
+        let raw_url = source
+            .mp4
+            .as_deref()
             .or(source.u.as_deref())
             .or(source.gif.as_deref());
 
@@ -340,7 +336,12 @@ pub async fn download_gallery(
 
         let file_path = gallery_dir.join(format!("{}.{}", number, ext));
 
-        tracing::debug!("Downloading gallery item {}/{}: {}", number, gallery_data.items.len(), url);
+        tracing::debug!(
+            "Downloading gallery item {}/{}: {}",
+            number,
+            gallery_data.items.len(),
+            url
+        );
 
         match download_direct(http_client, &url, &file_path).await {
             Ok(()) => count += 1,
@@ -376,11 +377,7 @@ pub fn has_ffmpeg() -> bool {
 /// Stream-download `url` to `path`.  Retries up to `DOWNLOAD_RETRIES` times on
 /// transient errors.  Returns an immediate error (no retry) on 403/404.
 /// Also enforces the `MAX_FILE_SIZE` limit and errors on empty responses.
-async fn download_to_file(
-    http_client: &reqwest::Client,
-    url: &str,
-    path: &Path,
-) -> Result<()> {
+async fn download_to_file(http_client: &reqwest::Client, url: &str, path: &Path) -> Result<()> {
     let total_attempts = DOWNLOAD_RETRIES + 1;
     let mut last_err: Option<Error> = None;
 
@@ -416,7 +413,10 @@ async fn download_to_file(
     }
 
     Err(last_err.unwrap_or_else(|| {
-        Error::Other(format!("All {} download attempts failed for {}", total_attempts, url))
+        Error::Other(format!(
+            "All {} download attempts failed for {}",
+            total_attempts, url
+        ))
     }))
 }
 
@@ -431,7 +431,10 @@ async fn attempt_download_to_file(
     let status_u16 = status.as_u16();
 
     if status_u16 == 403 || status_u16 == 404 {
-        return Err(Error::Other(format!("HTTP {} (permanent) for {}", status, url)));
+        return Err(Error::Other(format!(
+            "HTTP {} (permanent) for {}",
+            status, url
+        )));
     }
 
     if !status.is_success() {
