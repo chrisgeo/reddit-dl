@@ -19,5 +19,5 @@ file_naming = "id"
 friends = true
 follows = true
 saved = true
-subreddits = ["pics", "earthporn", "wallpapers"]
+subreddits = ["pics", "nasa", "wallpapers"]
 users = []
