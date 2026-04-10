@@ -70,15 +70,18 @@ fn resolve_config_path(cli_path: Option<&PathBuf>) -> Result<PathBuf> {
     if let Some(path) = cli_path {
         return Ok(path.clone());
     }
-    if let Some(default) = config::default_config_path() {
-        if default.exists() {
-            return Ok(default);
-        }
+    if let Some(found) = config::find_config() {
+        return Ok(found);
     }
+    let search_paths = config::config_search_paths();
+    let paths_display: Vec<String> = search_paths
+        .iter()
+        .map(|p| format!("  - {}", p.display()))
+        .collect();
     bail!(
-        "No config file found. Specify one with --config or create one at {:?}\n\
+        "No config file found. Specify one with --config or place it at one of:\n{}\n\
          See config.example.toml for the expected format.",
-        config::default_config_path().unwrap_or_default()
+        paths_display.join("\n")
     );
 }
 
@@ -112,8 +115,7 @@ async fn main() -> Result<()> {
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
             tracing::info!("Authenticated as {}", me.name);
 
-            let active_sources =
-                sources::build_sources(&config.sources, &me.name, &source);
+            let active_sources = sources::build_sources(&config.sources, &me.name, &source);
 
             if active_sources.is_empty() {
                 println!("No sources configured or matched the filter.");
