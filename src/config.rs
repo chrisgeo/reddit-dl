@@ -81,10 +81,6 @@ pub struct SourcesConfig {
     pub follows: bool,
     #[serde(default)]
     pub saved: bool,
-    #[serde(default)]
-    pub subreddits: Vec<String>,
-    #[serde(default)]
-    pub users: Vec<String>,
 }
 
 fn default_output_dir() -> String {

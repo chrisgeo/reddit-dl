@@ -15,9 +15,10 @@ include_comments = false
 # File naming: "id", "title", or "id-title"
 file_naming = "id"
 
+# Default sources synced when no --source flags are given.
+# Use --source on the CLI for ad-hoc targets:
+#   reddit-dl sync --source user:someone --source subreddit:pics
 [sources]
 friends = true
 follows = true
 saved = true
-subreddits = ["pics", "nasa", "wallpapers"]
-users = []

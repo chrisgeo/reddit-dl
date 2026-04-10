@@ -34,9 +34,10 @@ struct Cli {
 enum Command {
     /// Sync posts from configured sources
     Sync {
-        /// Only sync a specific source (e.g., "friends", "saved", "subreddit:pics", "user:spez")
+        /// Sources to sync. Repeatable. Examples: "friends", "saved", "subreddit:pics", "user:spez"
+        /// When omitted, syncs the default sources from config (friends, follows, saved).
         #[arg(long)]
-        source: Option<String>,
+        source: Vec<String>,
 
         /// Ignore cursors and re-scan everything (still deduplicates)
         #[arg(long)]
@@ -112,7 +113,7 @@ async fn main() -> Result<()> {
             tracing::info!("Authenticated as {}", me.name);
 
             let active_sources =
-                sources::build_sources(&config.sources, &me.name, source.as_deref());
+                sources::build_sources(&config.sources, &me.name, &source);
 
             if active_sources.is_empty() {
                 println!("No sources configured or matched the filter.");

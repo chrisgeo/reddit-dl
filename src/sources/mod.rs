@@ -31,58 +31,61 @@ pub trait Source: Send + Sync {
     ) -> Result<Vec<Post>>;
 }
 
-/// Build the list of active sources from config, optionally filtered by CLI --source flag.
+/// Build the list of sources to sync.
 ///
-/// When `--source user:X` or `--source subreddit:X` is given and X is not already
-/// in the config, the source is created ad-hoc so that CLI one-offs work without
-/// editing the config file.
+/// When `--source` flags are given, they define exactly what to sync:
+///   - `friends`, `follows`, `saved` — built-in category sources
+///   - `user:X` — ad-hoc user (no config entry needed)
+///   - `subreddit:X` — ad-hoc subreddit (no config entry needed)
+///
+/// When no `--source` flags are given, falls back to config defaults
+/// (friends, follows, saved booleans).
 pub fn build_sources(
     config: &SourcesConfig,
     username: &str,
-    source_filter: Option<&str>,
+    cli_sources: &[String],
 ) -> Vec<Box<dyn Source>> {
-    // If the filter specifies an ad-hoc user or subreddit, handle it directly.
-    if let Some(filter) = source_filter {
-        if let Some(target_user) = filter.strip_prefix("user:") {
-            return vec![Box::new(user::UserSource::new(target_user.to_string()))];
+    // Explicit --source flags: build exactly what was requested.
+    if !cli_sources.is_empty() {
+        let mut sources: Vec<Box<dyn Source>> = Vec::new();
+        for src in cli_sources {
+            if let Some(target) = src.strip_prefix("user:") {
+                sources.push(Box::new(user::UserSource::new(target.to_string())));
+            } else if let Some(target) = src.strip_prefix("subreddit:") {
+                sources.push(Box::new(subreddit::SubredditSource::new(
+                    target.to_string(),
+                )));
+            } else {
+                match src.as_str() {
+                    "friends" => sources.push(Box::new(friends::FriendsSource::new(
+                        username.to_string(),
+                    ))),
+                    "follows" => sources.push(Box::new(follows::FollowsSource::new(
+                        username.to_string(),
+                    ))),
+                    "saved" => {
+                        sources.push(Box::new(saved::SavedSource::new(username.to_string())))
+                    }
+                    other => {
+                        tracing::warn!("Unknown source '{}', skipping", other);
+                    }
+                }
+            }
         }
-        if let Some(target_sub) = filter.strip_prefix("subreddit:") {
-            return vec![Box::new(subreddit::SubredditSource::new(
-                target_sub.to_string(),
-            ))];
-        }
+        return sources;
     }
 
+    // No --source flags: use config defaults.
     let mut sources: Vec<Box<dyn Source>> = Vec::new();
 
-    let should_include = |source_type: &str| -> bool {
-        match source_filter {
-            None => true,
-            Some(filter) => source_type == filter,
-        }
-    };
-
-    if config.friends && should_include("friends") {
+    if config.friends {
         sources.push(Box::new(friends::FriendsSource::new(username.to_string())));
     }
-
-    if config.follows && should_include("follows") {
+    if config.follows {
         sources.push(Box::new(follows::FollowsSource::new(username.to_string())));
     }
-
-    if config.saved && should_include("saved") {
+    if config.saved {
         sources.push(Box::new(saved::SavedSource::new(username.to_string())));
-    }
-
-    if source_filter.is_none() || should_include("subreddits") {
-        for sub in &config.subreddits {
-            sources.push(Box::new(subreddit::SubredditSource::new(sub.clone())));
-        }
-    }
-    if source_filter.is_none() || should_include("users") {
-        for user in &config.users {
-            sources.push(Box::new(user::UserSource::new(user.clone())));
-        }
     }
 
     sources
