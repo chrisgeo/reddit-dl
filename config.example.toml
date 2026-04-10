@@ -14,6 +14,8 @@ include_metadata = true
 include_comments = false
 # File naming: "id", "title", or "id-title"
 file_naming = "id"
+# Optional: Imgur Client-ID for album downloads (register at https://imgur.com/account/settings/apps)
+# imgur_client_id = "your_imgur_client_id"
 
 # Default sources synced when no --source flags are given.
 # Use --source on the CLI for ad-hoc targets:

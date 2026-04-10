@@ -50,6 +50,8 @@ pub struct DownloadConfig {
     pub include_comments: bool,
     #[serde(default = "default_file_naming")]
     pub file_naming: FileNaming,
+    #[serde(default)]
+    pub imgur_client_id: Option<String>,
 }
 
 impl Default for DownloadConfig {
@@ -59,6 +61,7 @@ impl Default for DownloadConfig {
             include_metadata: true,
             include_comments: false,
             file_naming: FileNaming::Id,
+            imgur_client_id: None,
         }
     }
 }

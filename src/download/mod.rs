@@ -1,4 +1,6 @@
+pub mod imgur;
 pub mod media;
+pub mod redgifs;
 pub mod resolver;
 pub mod text;
 
@@ -13,9 +15,11 @@ use resolver::MediaType;
 /// Download all media associated with `post` and write optional sidecars.
 ///
 /// Returns the number of media files saved (not counting sidecar files).
+#[allow(clippy::too_many_arguments)]
 pub async fn download_post(
     client: &RedditClient,
     http_client: &reqwest::Client,
+    redgifs_client: &redgifs::RedGifsClient,
     post: &Post,
     source_type: &str,
     source_name: &str,
@@ -31,6 +35,7 @@ pub async fn download_post(
     // 3. Download
     let file_count = dispatch(
         http_client,
+        redgifs_client,
         client,
         post,
         source_type,
@@ -64,6 +69,7 @@ pub async fn download_post(
 #[allow(clippy::too_many_arguments)]
 async fn dispatch(
     http_client: &reqwest::Client,
+    redgifs_client: &redgifs::RedGifsClient,
     client: &RedditClient,
     post: &Post,
     source_type: &str,
@@ -169,36 +175,78 @@ async fn dispatch(
 
         // ── Imgur single ──────────────────────────────────────────────────────
         MediaType::ImgurSingle { url } => {
-            // Resolve to a direct image URL: add .jpg if no extension present
             let (download_url, ext) = resolve_imgur_single_url(url);
             let path =
                 output.post_path(source_type, source_name, &post.id, Some(&post.title), &ext);
-            match media::download_direct(http_client, &download_url, &path).await {
+            match imgur::download_single(http_client, url, &path).await {
                 Ok(()) => {
                     tracing::debug!("Downloaded imgur single for post {}", post.id);
                     Ok(1)
                 }
                 Err(e) => {
+                    // Fallback: try the resolved direct URL if the provider fails
+                    tracing::debug!("Imgur single provider failed, trying direct: {}", e);
+                    match media::download_direct(http_client, &download_url, &path).await {
+                        Ok(()) => Ok(1),
+                        Err(e2) => {
+                            tracing::warn!(
+                                "Failed to download imgur single for post {}: {}",
+                                post.id,
+                                e2
+                            );
+                            Ok(0)
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Imgur album ───────────────────────────────────────────────────────
+        MediaType::ImgurAlbum { url } => {
+            if let Some(ref client_id) = config.imgur_client_id {
+                let album_dir = output.gallery_dir(source_type, source_name, &post.id);
+                match imgur::download_album(http_client, url, &album_dir, client_id).await {
+                    Ok(n) => {
+                        tracing::debug!("Downloaded {} imgur album images for post {}", n, post.id);
+                        Ok(n)
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to download imgur album for post {}: {}",
+                            post.id,
+                            e
+                        );
+                        Ok(0)
+                    }
+                }
+            } else {
+                tracing::warn!(
+                    "Imgur album skipped (no imgur_client_id in config): post {}, url: {}",
+                    post.id,
+                    url
+                );
+                Ok(0)
+            }
+        }
+
+        // ── RedGifs video ─────────────────────────────────────────────────────
+        MediaType::RedGifs { url } => {
+            let path =
+                output.post_path(source_type, source_name, &post.id, Some(&post.title), "mp4");
+            match redgifs_client.download(url, &path).await {
+                Ok(()) => {
+                    tracing::debug!("Downloaded RedGifs video for post {}", post.id);
+                    Ok(1)
+                }
+                Err(e) => {
                     tracing::warn!(
-                        "Failed to download imgur single for post {}: {}",
+                        "Failed to download RedGifs video for post {}: {}",
                         post.id,
                         e
                     );
                     Ok(0)
                 }
             }
-        }
-
-        // ── Imgur album ───────────────────────────────────────────────────────
-        // We log a warning — full Imgur album support requires the Imgur API
-        // which is out of scope for Phase 5.
-        MediaType::ImgurAlbum { url } => {
-            tracing::warn!(
-                "Imgur album downloads are not yet supported (post {}, url: {})",
-                post.id,
-                url
-            );
-            Ok(0)
         }
 
         // ── External link ─────────────────────────────────────────────────────

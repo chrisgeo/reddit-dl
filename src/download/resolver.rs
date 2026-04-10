@@ -19,6 +19,9 @@ pub enum MediaType {
         url: String,
     },
     SelfPost,
+    RedGifs {
+        url: String,
+    },
     ExternalLink {
         url: String,
     },
@@ -105,7 +108,12 @@ pub fn resolve_media_type(post: &Post) -> MediaType {
         return MediaType::ImgurSingle { url };
     }
 
-    // 7. Any URL whose path ends with a known image/video extension
+    // 7. RedGifs video
+    if url_for_matching.contains("redgifs.com") {
+        return MediaType::RedGifs { url };
+    }
+
+    // 8. Any URL whose path ends with a known image/video extension
     // Use url_for_matching so query params / fragments don't confuse extension detection,
     // but pass the original url to DirectImage so query params are preserved for the download.
     if let Some(ext) = extension_from_url(url_for_matching) {
@@ -117,7 +125,7 @@ pub fn resolve_media_type(post: &Post) -> MediaType {
         }
     }
 
-    // 8. Everything else is an external link we can't directly download
+    // 9. Everything else is an external link we can't directly download
     MediaType::ExternalLink { url }
 }
 

@@ -138,6 +138,9 @@ async fn main() -> Result<()> {
                 .timeout(std::time::Duration::from_secs(60))
                 .build()?;
 
+            // RedGifs client with token caching for the session
+            let redgifs_client = download::redgifs::RedGifsClient::new(http_client.clone());
+
             let mut total_downloaded = 0u32;
             let mut total_skipped = 0u32;
             let mut source_errors = 0u32;
@@ -230,6 +233,7 @@ async fn main() -> Result<()> {
                             let file_count = download::download_post(
                                 &client,
                                 &http_client,
+                                &redgifs_client,
                                 post,
                                 src.source_type(),
                                 src.source_name(),
