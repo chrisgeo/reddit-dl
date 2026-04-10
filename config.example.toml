@@ -5,7 +5,7 @@ username = "your_username"
 password = "your_password"
 
 [output]
-directory = "~/reddit-archive"
+directory = "./downloads"
 create_subdirs = true
 
 [download]

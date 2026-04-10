@@ -31,49 +31,56 @@ pub trait Source: Send + Sync {
     ) -> Result<Vec<Post>>;
 }
 
-/// Build the list of active sources from config, optionally filtered by CLI --source flag
+/// Build the list of active sources from config, optionally filtered by CLI --source flag.
+///
+/// When `--source user:X` or `--source subreddit:X` is given and X is not already
+/// in the config, the source is created ad-hoc so that CLI one-offs work without
+/// editing the config file.
 pub fn build_sources(
     config: &SourcesConfig,
     username: &str,
     source_filter: Option<&str>,
 ) -> Vec<Box<dyn Source>> {
+    // If the filter specifies an ad-hoc user or subreddit, handle it directly.
+    if let Some(filter) = source_filter {
+        if let Some(target_user) = filter.strip_prefix("user:") {
+            return vec![Box::new(user::UserSource::new(target_user.to_string()))];
+        }
+        if let Some(target_sub) = filter.strip_prefix("subreddit:") {
+            return vec![Box::new(subreddit::SubredditSource::new(
+                target_sub.to_string(),
+            ))];
+        }
+    }
+
     let mut sources: Vec<Box<dyn Source>> = Vec::new();
 
-    let should_include = |source_type: &str, source_name: Option<&str>| -> bool {
+    let should_include = |source_type: &str| -> bool {
         match source_filter {
             None => true,
-            Some(filter) => {
-                if let Some(rest) = filter.strip_prefix("subreddit:") {
-                    source_type == "subreddits" && source_name == Some(rest)
-                } else if let Some(rest) = filter.strip_prefix("user:") {
-                    source_type == "users" && source_name == Some(rest)
-                } else {
-                    source_type == filter
-                }
-            }
+            Some(filter) => source_type == filter,
         }
     };
 
-    if config.friends && should_include("friends", None) {
+    if config.friends && should_include("friends") {
         sources.push(Box::new(friends::FriendsSource::new(username.to_string())));
     }
 
-    if config.follows && should_include("follows", None) {
+    if config.follows && should_include("follows") {
         sources.push(Box::new(follows::FollowsSource::new(username.to_string())));
     }
 
-    if config.saved && should_include("saved", None) {
+    if config.saved && should_include("saved") {
         sources.push(Box::new(saved::SavedSource::new(username.to_string())));
     }
 
-    for sub in &config.subreddits {
-        if should_include("subreddits", Some(sub)) {
+    if source_filter.is_none() || should_include("subreddits") {
+        for sub in &config.subreddits {
             sources.push(Box::new(subreddit::SubredditSource::new(sub.clone())));
         }
     }
-
-    for user in &config.users {
-        if should_include("users", Some(user)) {
+    if source_filter.is_none() || should_include("users") {
+        for user in &config.users {
             sources.push(Box::new(user::UserSource::new(user.clone())));
         }
     }
