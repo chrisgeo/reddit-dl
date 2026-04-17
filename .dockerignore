@@ -1,0 +1,28 @@
+# Build artifacts (huge)
+target/
+**/target/
+
+# VCS
+.git/
+.gitignore
+.gitlab-ci.yml
+.github/
+
+# Local state / secrets / user data
+config.toml
+downloads/
+*.db
+*.db-journal
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+.claude/
+
+# Docs that don't belong in the build context
+docs/
+
+# Docker files themselves (avoid rebuild-invalidation loops)
+Dockerfile
+.dockerignore
